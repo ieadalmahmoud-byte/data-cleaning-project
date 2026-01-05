@@ -1,0 +1,10 @@
+{
+  "drop_na": true,
+  "drop_duplicates": true,
+  "data_type_correction": {
+    "id": "int",
+    "price": "float"
+  },
+  "columns_to_remove": ["unnecessary_column_name"],
+  "profiling": false
+}
