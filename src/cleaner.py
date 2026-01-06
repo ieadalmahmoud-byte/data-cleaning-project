@@ -1,51 +1,104 @@
 import pandas as pd
 import json
-import os
+import logging
+from pathlib import Path
+
+# 1. Logging-Konfiguration (Protokollierung der Schritte)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bereinigung_log.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 
 
-def clean_data():
-    # 1. Pfade definieren
-    config_path = os.path.join('..', 'config', 'cleaning_config.json')
-    data_path = os.path.join('..', 'data', 'my_data.csv')
-    output_path = os.path.join('..', 'data', 'bereinigte_daten.csv')
+class DatenBereiniger:
+    """Klasse zur automatisierten Datenbereinigung basierend auf einer JSON-Konfiguration."""
 
-    # 2. Konfigurationsdatei laden
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
+    def __init__(self, konfigurations_datei: str):
+        # Verwendung von Pathlib für flexible Pfadverwaltung
+        self.basis_pfad = Path(__file__).parent.parent
+        self.konfig_pfad = self.basis_pfad / "config" / konfigurations_datei
+        self.konfiguration = self.lade_konfiguration()
+        self.df = None
 
-    # 3. Datendatei einlesen
-    df = pd.read_csv(data_path)
-    print("Daten wurden erfolgreich geladen.")
+    def lade_konfiguration(self):
+        """Lädt die Einstellungen aus der JSON-Datei."""
+        try:
+            with open(self.konfig_pfad, 'r', encoding='utf-8') as f:
+                logging.info(f"Konfiguration geladen von: {self.konfig_pfad}")
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Fehler beim Laden der Konfiguration: {e}")
+            return None
 
-    # 4. Bereinigungsschritte basierend auf der Konfiguration ausführen (laut Notes.md)
+    def lade_daten(self, eingabe_datei: str):
+        """Liest die CSV-Daten ein."""
+        daten_pfad = self.basis_pfad / "data" / eingabe_datei
+        try:
+            self.df = pd.read_csv(daten_pfad)
+            logging.info(f"Daten erfolgreich geladen. Anzahl der Zeilen: {len(self.df)}")
+        except Exception as e:
+            logging.error(f"Fehler beim Laden der Daten: {e}")
 
-    # a. Fehlende Werte entfernen (Drop NA)
-    if config.get("drop_na"):
-        df = df.dropna()
-        print("- Fehlende Werte wurden entfernt.")
+    def entferne_fehlwerte(self):
+        """Löscht Zeilen mit fehlenden Werten (Drop NA)."""
+        if self.konfiguration.get("drop_na"):
+            vorher = self.df.shape[0]
+            self.df = self.df.dropna()
+            logging.info(f"Fehlwerte entfernt. Zeilen vorher: {vorher}, nachher: {self.df.shape[0]}")
 
-    # b. Duplikate entfernen (Drop Duplicate)
-    if config.get("drop_duplicates"):
-        df = df.drop_duplicates()
-        print("- Duplikate wurden entfernt.")
+    def entferne_duplikate(self):
+        """Löscht doppelte Datensätze (Drop Duplicates)."""
+        if self.konfiguration.get("drop_duplicates"):
+            vorher = self.df.shape[0]
+            self.df = self.df.drop_duplicates()
+            logging.info(f"Duplikate entfernt. Zeilen vorher: {vorher}, nachher: {self.df.shape[0]}")
 
-    # c. Datentypen korrigieren (Data Type Correction)
-    if config.get("data_type_correction"):
-        for col, dtype in config["data_type_correction"].items():
-            if col in df.columns:
-                df[col] = df[col].astype(dtype)
-        print("- Datentypen wurden korrigiert.")
+    def korrigiere_datentypen(self):
+        """Korrigiert Datentypen basierend auf der Konfiguration."""
+        korrekturen = self.konfiguration.get("data_type_corrections", {})
+        for spalte, datentyp in korrekturen.items():
+            if spalte in self.df.columns:
+                try:
+                    self.df[spalte] = self.df[spalte].astype(datentyp)
+                    logging.info(f"Datentyp für Spalte '{spalte}' in {datentyp} geändert.")
+                except Exception as e:
+                    logging.warning(f"Korrektur für Spalte '{spalte}' fehlgeschlagen: {e}")
 
-    # d. Bestimmte Spalten entfernen (Remove certain columns)
-    if config.get("columns_to_remove"):
-        df = df.drop(columns=config["columns_to_remove"], errors='ignore')
-        print(f"- Folgende Spalten wurden entfernt: {config['columns_to_remove']}")
+    def entferne_spalten(self):
+        """Entfernt nicht benötigte Spalten."""
+        zu_entfernende_spalten = self.konfiguration.get("remove_columns", [])
+        vorhandene_spalten = [s for s in zu_entfernende_spalten if s in self.df.columns]
+        if vorhandene_spalten:
+            self.df = self.df.drop(columns=vorhandene_spalten)
+            logging.info(f"Folgende Spalten wurden entfernt: {vorhandene_spalten}")
 
-    # 5. Bereinigte Daten speichern
-    df.to_csv(output_path, index=False)
-    print(f"\nErfolg! Die bereinigte Datei wurde hier gespeichert: {output_path}")
+    def speichere_daten(self, ausgabe_datei: str):
+        """Speichert die bereinigten Daten in eine neue CSV-Datei."""
+        ausgabe_pfad = self.basis_pfad / "data" / ausgabe_datei
+        try:
+            self.df.to_csv(ausgabe_pfad, index=False)
+            logging.info(f"Bereinigte Daten gespeichert unter: {ausgabe_pfad}")
+        except Exception as e:
+            logging.error(f"Fehler beim Speichern der Daten: {e}")
+
+    def ausfuehren(self, eingabe: str, ausgabe: str):
+        """Startet den gesamten Bereinigungsprozess (Pipeline)."""
+        logging.info("Start der Datenbereinigung...")
+        self.lade_daten(eingabe)
+
+        if self.df is not None:
+            self.entferne_fehlwerte()
+            self.entferne_duplikate()
+            self.korrigiere_datentypen()
+            self.entferne_spalten()
+            self.speichere_daten(ausgabe)
+            logging.info("Datenbereinigung erfolgreich abgeschlossen.")
 
 
+# Programmstart
 if __name__ == "__main__":
-    clean_data()
-
+    bereiniger = DatenBereiniger("cleaning_config.json")
